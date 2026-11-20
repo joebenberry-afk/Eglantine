@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "issue": 2,
+  "milestone": "0.5",
+  "verdict": "OPEN",
+  "reason": "Attribution incomplete on b5aef6b73b (16 MiB ring overflow: 99k-155k lost_events; missing fork-0.5 commit 753ed73b1e); historical 0.5.0-pre6 XC2 single pair also missed halving (1->1, residual texture 196.6 ms). Incompatible cache rejection passes on both titles.",
+  "candidate": {
+    "binary": "eden-cli.exe",
+    "sha256": "03edae9b781bf437bba1ebb73d306626c5bf4cb80a8032ec9cb71a3c5dfc8326",
+    "revision": "b5aef6b73b2229c9930668eccb395e9f894a2886",
+    "branch": "acc/h-int54",
+    "baseline_version": 5,
+    "baseline_hash": "c564d93ae25b511c21a54b582dfe1b69a95b112c6bbed9c4217856ff51e7fe4a"
+  },
+  "titles": {
+    "fe_fw": {
+      "cold": {
+        "exit_code": 0,
+        "metrics_complete": true,
+        "shutdown_complete": true,
+        "on_baseline": true,
+        "first_120s_frames": 3453,
+        "raw_over_100ms": 5,
+        "max_ms": 2260.279,
+        "attribution_complete": false,
+        "lost_events": 154962,
+        "unknown_wall_fraction": 0.9831,
+        "cache_recorded": 99
+      },
+      "second": {
+        "exit_code": 0,
+        "metrics_complete": true,
+        "shutdown_complete": true,
+        "on_baseline": true,
+        "first_120s_frames": 3529,
+        "raw_over_100ms": 4,
+        "max_ms": 1700.863,
+        "attribution_complete": false,
+        "lost_events": 154682,
+        "unknown_wall_fraction": 0.9887,
+        "cache_prepared": 99,
+        "cache_adopted": 69,
+        "cache_recorded": 30
+      },
+      "gate_verdict": "INCOMPLETE",
+      "cache_rejection": {
+        "cache_subpath": "semantics_r6/vulkan.mythos.bin",
+        "format_version_999": "PASS",
+        "legacy_format": "PASS"
+      }
+    },
+    "xc2": {
+      "cold": {
+        "exit_code": 0,
+        "metrics_complete": true,
+        "shutdown_complete": true,
+        "on_baseline": true,
+        "first_120s_frames": 6876,
+        "raw_over_100ms": 12,
+        "max_ms": 1096.729,
+        "attribution_complete": false,
+        "lost_events": 99065,
+        "unknown_wall_fraction": 0.9615,
+        "cache_recorded": 187
+      },
+      "second": {
+        "exit_code": 0,
+        "metrics_complete": true,
+        "shutdown_complete": true,
+        "on_baseline": true,
+        "first_120s_frames": 6894,
+        "raw_over_100ms": 13,
+        "max_ms": 1371.144,
+        "attribution_complete": false,
+        "lost_events": 99518,
+        "unknown_wall_fraction": 0.9665,
+        "cache_prepared": 148,
+        "cache_adopted": 36,
+        "cache_evicted": 112,
+        "cache_demand_promoted": 19,
+        "cache_budget_pauses": 2,
+        "cache_recorded": 79
+      },
+      "gate_verdict": "INCOMPLETE",
+      "cache_rejection": {
+        "cache_subpath": "semantics_r6/vulkan.mythos.bin",
+        "format_version_999": "PASS",
+        "legacy_format": "PASS"
+      }
+    }
+  }
+}
