@@ -317,6 +317,8 @@ add_library(core STATIC
     hle/kernel/k_scheduler.cpp
     hle/kernel/k_scheduler.h
     hle/kernel/k_scheduler_lock.h
+    hle/kernel/k_scheduler_trace.cpp
+    hle/kernel/k_scheduler_trace.h
     hle/kernel/k_scoped_lock.h
     hle/kernel/k_scoped_resource_reservation.h
     hle/kernel/k_scoped_scheduler_lock_and_sleep.h

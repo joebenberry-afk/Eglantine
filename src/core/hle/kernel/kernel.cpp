@@ -21,6 +21,7 @@
 #include "common/logging.h"
 #include "common/nx2_sampler.h"
 #include "common/scope_exit.h"
+#include "common/settings.h"
 #include "common/thread.h"
 #include "common/thread_worker.h"
 #include "core/arm/arm_interface.h"
@@ -881,10 +882,15 @@ void KernelCore::SetMulticore(bool is_multicore) {
 
 void KernelCore::Initialize() {
     slab_heap_container = std::make_unique<SlabHeapContainer>();
+    SetSchedulerTraceEnabled(Settings::values.trace_scheduler_latency.GetValue());
     impl->Initialize(*this);
 }
 
 void KernelCore::Shutdown() {
+    if (IsSchedulerTraceEnabled()) {
+        scheduler_trace.LogSanitizedSummary();
+        scheduler_trace.SetEnabled(false);
+    }
     impl->Shutdown(*this);
 }
 
@@ -1324,6 +1330,23 @@ const KWorkerTaskManager& KernelCore::WorkerTaskManager() const {
 
 const KMemoryLayout& KernelCore::MemoryLayout() const {
     return *impl->memory_layout;
+}
+
+void KernelCore::SetSchedulerTraceEnabled(bool enabled, size_t capacity_per_producer) {
+    scheduler_trace.Reset(CurrentTraceTimeNs());
+    scheduler_trace.SetEnabled(enabled, capacity_per_producer);
+}
+
+s32 KernelCore::CurrentEmitterCoreId() const {
+    const u32 core_id = impl->GetCurrentHostThreadID();
+    if (core_id < Core::Hardware::NUM_CPU_CORES) {
+        return static_cast<s32>(core_id);
+    }
+    return -1;
+}
+
+u64 KernelCore::CurrentTraceTimeNs() const {
+    return static_cast<u64>(impl->system.CoreTiming().GetGlobalTimeNs().count());
 }
 
 bool KernelCore::IsPhantomModeForSingleCore() const {

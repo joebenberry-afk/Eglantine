@@ -15,6 +15,22 @@ void KThreadQueue::NotifyAvailable(KernelCore& kernel, KThread* waiting_thread, 
 }
 
 void KThreadQueue::EndWait(KernelCore& kernel, KThread* waiting_thread, Result wait_result) {
+    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = KSchedulerTrace::ThreadKey(waiting_thread),
+            .wait_id = waiting_thread->GetTraceWaitId(),
+            .emitter_core = kernel.CurrentEmitterCoreId(),
+            .subject_core = waiting_thread->GetActiveCore(),
+            .priority = waiting_thread->GetPriority(),
+            .affinity_mask =
+                static_cast<u32>(waiting_thread->GetAffinityMask().GetAffinityMask()),
+            .aux = wait_result.GetInnerValue(),
+            .kind = KSchedulerTrace::EventKind::WaitOutcome,
+            .sub_kind = 0,
+        });
+    }
+
     // Set the thread's wait result.
     waiting_thread->SetWaitResult(wait_result);
 
@@ -31,6 +47,22 @@ void KThreadQueue::EndWait(KernelCore& kernel, KThread* waiting_thread, Result w
 }
 
 void KThreadQueue::CancelWait(KernelCore& kernel, KThread* waiting_thread, Result wait_result, bool cancel_timer_task) {
+    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = KSchedulerTrace::ThreadKey(waiting_thread),
+            .wait_id = waiting_thread->GetTraceWaitId(),
+            .emitter_core = kernel.CurrentEmitterCoreId(),
+            .subject_core = waiting_thread->GetActiveCore(),
+            .priority = waiting_thread->GetPriority(),
+            .affinity_mask =
+                static_cast<u32>(waiting_thread->GetAffinityMask().GetAffinityMask()),
+            .aux = wait_result.GetInnerValue(),
+            .kind = KSchedulerTrace::EventKind::WaitOutcome,
+            .sub_kind = 1,
+        });
+    }
+
     // Set the thread's wait result.
     waiting_thread->SetWaitResult(wait_result);
 

@@ -17,6 +17,7 @@
 #include "common/polyfill_thread.h"
 #include "core/hardware_properties.h"
 #include "core/hle/kernel/k_auto_object.h"
+#include "core/hle/kernel/k_scheduler_trace.h"
 #include "core/hle/kernel/k_slab_heap.h"
 #include "core/hle/kernel/k_typed_address.h"
 #include "core/hle/kernel/svc_common.h"
@@ -306,6 +307,22 @@ public:
     /// Gets the memory layout.
     const KMemoryLayout& MemoryLayout() const;
 
+    /// Bounded scheduler transition tracing (off by default).
+    KSchedulerTrace& SchedulerTrace() noexcept {
+        return scheduler_trace;
+    }
+    const KSchedulerTrace& SchedulerTrace() const noexcept {
+        return scheduler_trace;
+    }
+    bool IsSchedulerTraceEnabled() const noexcept {
+        return scheduler_trace.IsEnabled();
+    }
+    void SetSchedulerTraceEnabled(
+        bool enabled,
+        size_t capacity_per_producer = KSchedulerTrace::DefaultProducerCapacity);
+    s32 CurrentEmitterCoreId() const;
+    u64 CurrentTraceTimeNs() const;
+
 private:
     friend class KProcess;
     friend class KThread;
@@ -338,6 +355,7 @@ private:
     struct SlabHeapContainer;
 
     std::unique_ptr<SlabHeapContainer> slab_heap_container;
+    KSchedulerTrace scheduler_trace;
 };
 
 } // namespace Kernel

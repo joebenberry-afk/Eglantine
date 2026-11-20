@@ -127,6 +127,22 @@ void PhysicalCore::RunThread(KernelCore& kernel, Kernel::KThread* thread) {
                     thread->SetStepState(StepState::StepPerformed);
                 }
             } else {
+                if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                    if (const u64 hgen = thread->ConsumePendingGuestEnterGen(); hgen != 0) {
+                        kernel.SchedulerTrace().Record({
+                            .virt_ns = kernel.CurrentTraceTimeNs(),
+                            .thread_key = KSchedulerTrace::ThreadKey(thread),
+                            .wait_id = thread->GetTraceWaitId(),
+                            .handoff_gen = hgen,
+                            .emitter_core = static_cast<s32>(m_core_index),
+                            .subject_core = static_cast<s32>(m_core_index),
+                            .priority = thread->GetPriority(),
+                            .affinity_mask =
+                                static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                            .kind = KSchedulerTrace::EventKind::GuestEnter,
+                        });
+                    }
+                }
                 const u64 run_begin = Nx2Bottleneck::Now();
                 hr = interface->RunThread(thread);
                 Nx2Bottleneck::AddGuestRun(m_core_index, Nx2Bottleneck::Now() - run_begin);
@@ -278,7 +294,26 @@ void PhysicalCore::Idle(KernelCore& kernel) {
         }
     }
     std::unique_lock lk{m_guard};
+    bool parked = false;
+    if (!m_is_interrupted.load(std::memory_order_acquire) && kernel.IsSchedulerTraceEnabled())
+        [[unlikely]] {
+        parked = true;
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .emitter_core = static_cast<s32>(m_core_index),
+            .subject_core = static_cast<s32>(m_core_index),
+            .kind = KSchedulerTrace::EventKind::CorePark,
+        });
+    }
     m_on_interrupt.wait(lk, [this] { return m_is_interrupted.load(); });
+    if (parked && kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .emitter_core = static_cast<s32>(m_core_index),
+            .subject_core = static_cast<s32>(m_core_index),
+            .kind = KSchedulerTrace::EventKind::CoreWake,
+        });
+    }
 }
 
 void PhysicalCore::YieldIdle(KernelCore& kernel, std::chrono::nanoseconds limit) {

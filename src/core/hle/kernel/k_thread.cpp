@@ -397,6 +397,19 @@ namespace Kernel {
 
         // If we're waiting, cancel the wait.
         if (this->GetState() == ThreadState::Waiting) {
+            if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(this),
+                    .wait_id = this->GetTraceWaitId(),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = this->GetActiveCore(),
+                    .priority = this->GetPriority(),
+                    .affinity_mask = static_cast<u32>(this->GetAffinityMask().GetAffinityMask()),
+                    .kind = KSchedulerTrace::EventKind::Signal,
+                    .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::TimerExpired),
+                });
+            }
             m_wait_queue->CancelWait(kernel, this, ResultTimedOut, false);
         }
     }
@@ -546,6 +559,20 @@ namespace Kernel {
 
         // Resume any threads that began waiting on us while we were pinned.
         for (auto it = m_pinned_waiter_list.begin(); it != m_pinned_waiter_list.end(); it = m_pinned_waiter_list.erase(it)) {
+            if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                KThread* const waiter = std::addressof(*it);
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(waiter),
+                    .wait_id = waiter->GetTraceWaitId(),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = waiter->GetActiveCore(),
+                    .priority = waiter->GetPriority(),
+                    .affinity_mask = static_cast<u32>(waiter->GetAffinityMask().GetAffinityMask()),
+                    .kind = KSchedulerTrace::EventKind::Signal,
+                    .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::WakeReady),
+                });
+            }
             it->EndWait(kernel, ResultSuccess);
         }
     }
@@ -1280,6 +1307,19 @@ namespace Kernel {
 
             // Wake up the thread.
             if (this->GetState() == ThreadState::Waiting) {
+                if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                    kernel.SchedulerTrace().Record({
+                        .virt_ns = kernel.CurrentTraceTimeNs(),
+                        .thread_key = KSchedulerTrace::ThreadKey(this),
+                        .wait_id = this->GetTraceWaitId(),
+                        .emitter_core = kernel.CurrentEmitterCoreId(),
+                        .subject_core = this->GetActiveCore(),
+                        .priority = this->GetPriority(),
+                        .affinity_mask = static_cast<u32>(this->GetAffinityMask().GetAffinityMask()),
+                        .kind = KSchedulerTrace::EventKind::Signal,
+                        .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::Cancelled),
+                    });
+                }
                 m_wait_queue->CancelWait(kernel, this, ResultTerminationRequested, true);
             }
         }
@@ -1306,6 +1346,21 @@ namespace Kernel {
 
             // Wait for the sleep to end.
             wait_queue.SetHardwareTimer(timer);
+            const u64 wait_id = this->NextTraceWaitId();
+            if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(this),
+                    .wait_id = wait_id,
+                    .deadline_virt_ns = static_cast<u64>(timeout),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = this->GetActiveCore(),
+                    .priority = this->GetPriority(),
+                    .affinity_mask = static_cast<u32>(this->GetAffinityMask().GetAffinityMask()),
+                    .kind = KSchedulerTrace::EventKind::WaitBegin,
+                    .sub_kind = static_cast<u8>(KSchedulerTrace::WaitKind::Sleep),
+                });
+            }
             this->BeginWait(kernel, std::addressof(wait_queue));
             this->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Sleep);
         }
