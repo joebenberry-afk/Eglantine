@@ -199,6 +199,28 @@ u64 KScheduler::UpdateHighestPriorityThread(KernelCore& kernel, KThread* highest
         }
 
         m_state.highest_priority_thread = highest_thread;
+        if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+            const bool sel_idle = highest_thread == nullptr || highest_thread == m_idle_thread;
+            const bool prev_idle = prev_highest_thread == nullptr || prev_highest_thread == m_idle_thread;
+            const u8 flags = static_cast<u8>((sel_idle ? 1U : 0U) | (prev_idle ? 2U : 0U));
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = sel_idle ? 0 : KSchedulerTrace::ThreadKey(highest_thread),
+                .wait_id = highest_thread ? highest_thread->GetTraceWaitId() : 0,
+                .secondary_thread_key =
+                    prev_idle ? 0 : KSchedulerTrace::ThreadKey(prev_highest_thread),
+                .emitter_core = m_core_id,
+                .subject_core = m_core_id,
+                .priority = highest_thread ? highest_thread->GetPriority() : 0,
+                .secondary_priority =
+                    prev_highest_thread ? prev_highest_thread->GetPriority() : 0,
+                .affinity_mask = highest_thread
+                    ? static_cast<u32>(highest_thread->GetAffinityMask().GetAffinityMask())
+                    : 0,
+                .kind = KSchedulerTrace::EventKind::Select,
+                .flags = flags,
+            });
+        }
         if (YieldIdleEnabled) {
             for (size_t core = 0; core < Core::Hardware::NUM_CPU_CORES; ++core) {
                 kernel.PhysicalCore(core).WakeYieldIdle();
@@ -275,6 +297,20 @@ u64 KScheduler::UpdateHighestPriorityThreadsImpl(KernelCore& kernel) {
                     // The suggested thread isn't bound to its core, so we can migrate it!
                     suggested->SetActiveCore(core_id);
                     priority_queue.ChangeCore(suggested_core, suggested);
+                    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                        kernel.SchedulerTrace().Record({
+                            .virt_ns = kernel.CurrentTraceTimeNs(),
+                            .thread_key = KSchedulerTrace::ThreadKey(suggested),
+                            .wait_id = suggested->GetTraceWaitId(),
+                            .emitter_core = kernel.CurrentEmitterCoreId(),
+                            .subject_core = core_id,
+                            .priority = suggested->GetPriority(),
+                            .affinity_mask = static_cast<u32>(
+                                suggested->GetAffinityMask().GetAffinityMask()),
+                            .aux = static_cast<u32>(suggested_core),
+                            .kind = KSchedulerTrace::EventKind::Migrate,
+                        });
+                    }
                     top_threads[core_id] = suggested;
                     cores_needing_scheduling |= kernel.Scheduler(core_id).UpdateHighestPriorityThread(kernel, top_threads[core_id]);
                     break;
@@ -304,6 +340,20 @@ u64 KScheduler::UpdateHighestPriorityThreadsImpl(KernelCore& kernel) {
                         // Perform the migration.
                         suggested->SetActiveCore(core_id);
                         priority_queue.ChangeCore(candidate_core, suggested);
+                        if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                            kernel.SchedulerTrace().Record({
+                                .virt_ns = kernel.CurrentTraceTimeNs(),
+                                .thread_key = KSchedulerTrace::ThreadKey(suggested),
+                                .wait_id = suggested->GetTraceWaitId(),
+                                .emitter_core = kernel.CurrentEmitterCoreId(),
+                                .subject_core = core_id,
+                                .priority = suggested->GetPriority(),
+                                .affinity_mask = static_cast<u32>(
+                                    suggested->GetAffinityMask().GetAffinityMask()),
+                                .aux = static_cast<u32>(candidate_core),
+                                .kind = KSchedulerTrace::EventKind::Migrate,
+                            });
+                        }
                         top_threads[core_id] = suggested;
                         cores_needing_scheduling |= kernel.Scheduler(core_id).UpdateHighestPriorityThread(kernel, top_threads[core_id]);
                         break;
@@ -439,6 +489,21 @@ void KScheduler::ScheduleImplFiber(KernelCore& kernel) {
     // Save the original thread context.
     Unload(kernel, cur_thread);
 
+    if (kernel.IsSchedulerTraceEnabled() && cur_thread != m_idle_thread &&
+        cur_thread->GetRawState() == ThreadState::Runnable) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = KSchedulerTrace::ThreadKey(cur_thread),
+            .wait_id = cur_thread->GetTraceWaitId(),
+            .emitter_core = m_core_id,
+            .subject_core = cur_thread->GetActiveCore(),
+            .priority = cur_thread->GetPriority(),
+            .affinity_mask =
+                static_cast<u32>(cur_thread->GetAffinityMask().GetAffinityMask()),
+            .kind = KSchedulerTrace::EventKind::SwitchOutRunnable,
+        });
+    }
+
     // The current thread's context has been entirely taken care of.
     // Now we want to loop until we successfully switch the thread context.
     while (true) {
@@ -497,6 +562,23 @@ void KScheduler::ScheduleImplFiber(KernelCore& kernel) {
     }
 
     // Reload the guest thread context.
+    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        const bool is_idle = highest_priority_thread == m_idle_thread;
+        const u64 hgen = is_idle ? 0 : highest_priority_thread->NextTraceHandoffGen();
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = is_idle ? 0 : KSchedulerTrace::ThreadKey(highest_priority_thread),
+            .wait_id = highest_priority_thread->GetTraceWaitId(),
+            .handoff_gen = hgen,
+            .emitter_core = m_core_id,
+            .subject_core = m_core_id,
+            .priority = highest_priority_thread->GetPriority(),
+            .affinity_mask = static_cast<u32>(
+                highest_priority_thread->GetAffinityMask().GetAffinityMask()),
+            .kind = KSchedulerTrace::EventKind::Handoff,
+            .flags = static_cast<u8>(is_idle ? 1U : 0U),
+        });
+    }
     Reload(kernel, highest_priority_thread);
 
     // Reload the host thread.
@@ -543,6 +625,20 @@ void KScheduler::OnThreadStateChanged(KernelCore& kernel, KThread* thread, Threa
             GetPriorityQueue(kernel).Remove(thread);
             IncrementScheduledCount(thread);
             SetSchedulerUpdateNeeded(kernel);
+            if (kernel.IsSchedulerTraceEnabled() && !thread->IsDummyThread()) [[unlikely]] {
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(thread),
+                    .wait_id = thread->GetTraceWaitId(),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = thread->GetActiveCore(),
+                    .priority = thread->GetPriority(),
+                    .affinity_mask =
+                        static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                    .aux = static_cast<u32>(cur_state),
+                    .kind = KSchedulerTrace::EventKind::NotRunnable,
+                });
+            }
             // HACK: if this is a dummy thread, it should no longer wake up when the
             // scheduler lock is released.
             if (thread->IsDummyThread())
@@ -552,6 +648,20 @@ void KScheduler::OnThreadStateChanged(KernelCore& kernel, KThread* thread, Threa
             GetPriorityQueue(kernel).PushBack(thread);
             IncrementScheduledCount(thread);
             SetSchedulerUpdateNeeded(kernel);
+            if (kernel.IsSchedulerTraceEnabled() && !thread->IsDummyThread()) [[unlikely]] {
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(thread),
+                    .wait_id = thread->GetTraceWaitId(),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = thread->GetActiveCore(),
+                    .priority = thread->GetPriority(),
+                    .affinity_mask =
+                        static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                    .aux = thread->GetSuspendFlags(),
+                    .kind = KSchedulerTrace::EventKind::Runnable,
+                });
+            }
             // Even a lower-priority runnable thread must wake an experimental yield wait.
             if (YieldIdleEnabled) {
                 for (size_t core = 0; core < Core::Hardware::NUM_CPU_CORES; ++core) {
@@ -592,6 +702,20 @@ void KScheduler::OnThreadAffinityMaskChanged(KernelCore& kernel, KThread* thread
         GetPriorityQueue(kernel).ChangeAffinityMask(old_core, old_affinity, thread);
         IncrementScheduledCount(thread);
         SetSchedulerUpdateNeeded(kernel);
+        if (kernel.IsSchedulerTraceEnabled() && !thread->IsDummyThread()) [[unlikely]] {
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = KSchedulerTrace::ThreadKey(thread),
+                .wait_id = thread->GetTraceWaitId(),
+                .emitter_core = kernel.CurrentEmitterCoreId(),
+                .subject_core = thread->GetActiveCore(),
+                .priority = thread->GetPriority(),
+                .affinity_mask =
+                    static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                .aux = static_cast<u32>(old_core),
+                .kind = KSchedulerTrace::EventKind::Migrate,
+            });
+        }
         if (YieldIdleEnabled) {
             for (size_t core = 0; core < Core::Hardware::NUM_CPU_CORES; ++core) {
                 kernel.PhysicalCore(core).WakeYieldIdle();

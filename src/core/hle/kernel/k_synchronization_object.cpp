@@ -91,6 +91,7 @@ Result KSynchronizationObject::Wait(KernelCore& kernel, s32* out_index,
 
         // Check if the thread should terminate.
         if (thread->IsTerminationRequested()) {
+            kernel.SchedulerTrace().RecordImmediate(KSchedulerTrace::WaitKind::Synchronization, 4);
             slp.CancelSleep();
             R_THROW(ResultTerminationRequested);
         }
@@ -100,6 +101,8 @@ Result KSynchronizationObject::Wait(KernelCore& kernel, s32* out_index,
             ASSERT(objects[i] != nullptr);
 
             if (objects[i]->IsSignaled(kernel)) {
+                kernel.SchedulerTrace().RecordImmediate(KSchedulerTrace::WaitKind::Synchronization,
+                                                        1);
                 *out_index = i;
                 slp.CancelSleep();
                 R_THROW(ResultSuccess);
@@ -108,12 +111,14 @@ Result KSynchronizationObject::Wait(KernelCore& kernel, s32* out_index,
 
         // Check if the timeout is zero.
         if (timeout == 0) {
+            kernel.SchedulerTrace().RecordImmediate(KSchedulerTrace::WaitKind::Synchronization, 2);
             slp.CancelSleep();
             R_THROW(ResultTimedOut);
         }
 
         // Check if waiting was canceled.
         if (thread->IsWaitCancelled()) {
+            kernel.SchedulerTrace().RecordImmediate(KSchedulerTrace::WaitKind::Synchronization, 3);
             slp.CancelSleep();
             thread->ClearWaitCancelled();
             R_THROW(ResultCancelled);
@@ -135,6 +140,24 @@ Result KSynchronizationObject::Wait(KernelCore& kernel, s32* out_index,
 
         // Wait for an object to be signaled.
         wait_queue.SetHardwareTimer(timer);
+        const u64 wait_id = thread->NextTraceWaitId();
+        if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = KSchedulerTrace::ThreadKey(thread),
+                .wait_id = wait_id,
+                .object_key =
+                    num_objects > 0 ? static_cast<u64>(reinterpret_cast<uintptr_t>(objects[0])) : 0,
+                .deadline_virt_ns = timeout > 0 ? static_cast<u64>(timeout) : 0,
+                .emitter_core = kernel.CurrentEmitterCoreId(),
+                .subject_core = thread->GetActiveCore(),
+                .priority = thread->GetPriority(),
+                .affinity_mask = static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                .aux = static_cast<u32>(num_objects),
+                .kind = KSchedulerTrace::EventKind::WaitBegin,
+                .sub_kind = static_cast<u8>(KSchedulerTrace::WaitKind::Synchronization),
+            });
+        }
         thread->BeginWait(kernel, std::addressof(wait_queue));
         thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Synchronization);
     }
@@ -160,6 +183,22 @@ void KSynchronizationObject::NotifyAvailable(KernelCore& kernel, Result result) 
 
     // Iterate over each thread.
     for (auto* cur_node = m_thread_list_head; cur_node != nullptr; cur_node = cur_node->next) {
+        if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+            KThread* const waiter = cur_node->thread;
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = KSchedulerTrace::ThreadKey(waiter),
+                .wait_id = waiter->GetTraceWaitId(),
+                .object_key = static_cast<u64>(reinterpret_cast<uintptr_t>(this)),
+                .emitter_core = kernel.CurrentEmitterCoreId(),
+                .subject_core = waiter->GetActiveCore(),
+                .priority = waiter->GetPriority(),
+                .affinity_mask = static_cast<u32>(waiter->GetAffinityMask().GetAffinityMask()),
+                .aux = result.GetInnerValue(),
+                .kind = KSchedulerTrace::EventKind::Signal,
+                .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::WakeReady),
+            });
+        }
         cur_node->thread->NotifyAvailable(kernel, this, result);
     }
 }

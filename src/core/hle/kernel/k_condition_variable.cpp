@@ -184,6 +184,22 @@ Result KConditionVariable::WaitForAddress(KernelCore& kernel, Handle handle, KPr
         owner_thread->AddWaiter(kernel, cur_thread);
 
         // Begin waiting.
+        const u64 wait_id = cur_thread->NextTraceWaitId();
+        if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = KSchedulerTrace::ThreadKey(cur_thread),
+                .wait_id = wait_id,
+                .object_key = GetInteger(addr),
+                .emitter_core = kernel.CurrentEmitterCoreId(),
+                .subject_core = cur_thread->GetActiveCore(),
+                .priority = cur_thread->GetPriority(),
+                .affinity_mask =
+                    static_cast<u32>(cur_thread->GetAffinityMask().GetAffinityMask()),
+                .kind = KSchedulerTrace::EventKind::WaitBegin,
+                .sub_kind = static_cast<u8>(KSchedulerTrace::WaitKind::ArbiterMutex),
+            });
+        }
         cur_thread->BeginWait(kernel, std::addressof(wait_queue));
         cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::ConditionVar);
     }
@@ -219,6 +235,21 @@ void KConditionVariable::SignalImpl(KernelCore& kernel, KThread* thread) {
     if (can_access) {
         if (prev_tag == Svc::InvalidHandle) {
             // If nobody held the lock previously, we're all good.
+            if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                kernel.SchedulerTrace().Record({
+                    .virt_ns = kernel.CurrentTraceTimeNs(),
+                    .thread_key = KSchedulerTrace::ThreadKey(thread),
+                    .wait_id = thread->GetTraceWaitId(),
+                    .object_key = thread->GetConditionVariableKey(),
+                    .emitter_core = kernel.CurrentEmitterCoreId(),
+                    .subject_core = thread->GetActiveCore(),
+                    .priority = thread->GetPriority(),
+                    .affinity_mask =
+                        static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                    .kind = KSchedulerTrace::EventKind::Signal,
+                    .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::WakeReady),
+                });
+            }
             thread->EndWait(kernel, ResultSuccess);
         } else {
             // Get the previous owner.
@@ -229,10 +260,42 @@ void KConditionVariable::SignalImpl(KernelCore& kernel, KThread* thread) {
 
             if (owner_thread) {
                 // Add the thread as a waiter on the owner.
+                if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                    kernel.SchedulerTrace().Record({
+                        .virt_ns = kernel.CurrentTraceTimeNs(),
+                        .thread_key = KSchedulerTrace::ThreadKey(thread),
+                        .wait_id = thread->GetTraceWaitId(),
+                        .object_key = thread->GetConditionVariableKey(),
+                        .secondary_thread_key = KSchedulerTrace::ThreadKey(owner_thread),
+                        .emitter_core = kernel.CurrentEmitterCoreId(),
+                        .subject_core = thread->GetActiveCore(),
+                        .priority = thread->GetPriority(),
+                        .secondary_priority = owner_thread->GetPriority(),
+                        .affinity_mask =
+                            static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                        .kind = KSchedulerTrace::EventKind::Signal,
+                        .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::MovedToMutex),
+                    });
+                }
                 owner_thread->AddWaiter(kernel, thread);
                 owner_thread->Close(kernel);
             } else {
                 // The lock was tagged with a thread that doesn't exist.
+                if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+                    kernel.SchedulerTrace().Record({
+                        .virt_ns = kernel.CurrentTraceTimeNs(),
+                        .thread_key = KSchedulerTrace::ThreadKey(thread),
+                        .wait_id = thread->GetTraceWaitId(),
+                        .object_key = thread->GetConditionVariableKey(),
+                        .emitter_core = kernel.CurrentEmitterCoreId(),
+                        .subject_core = thread->GetActiveCore(),
+                        .priority = thread->GetPriority(),
+                        .affinity_mask =
+                            static_cast<u32>(thread->GetAffinityMask().GetAffinityMask()),
+                        .kind = KSchedulerTrace::EventKind::Signal,
+                        .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::InvalidOwner),
+                    });
+                }
                 thread->EndWait(kernel, ResultInvalidState);
             }
         }
@@ -301,6 +364,22 @@ Result KConditionVariable::Wait(KProcessAddress addr, u64 key, u32 value, s64 ti
                 }
 
                 // Wake up the next owner.
+                if (m_system.Kernel().IsSchedulerTraceEnabled()) [[unlikely]] {
+                    auto& kernel = m_system.Kernel();
+                    kernel.SchedulerTrace().Record({
+                        .virt_ns = kernel.CurrentTraceTimeNs(),
+                        .thread_key = KSchedulerTrace::ThreadKey(next_owner_thread),
+                        .wait_id = next_owner_thread->GetTraceWaitId(),
+                        .object_key = GetInteger(addr),
+                        .emitter_core = kernel.CurrentEmitterCoreId(),
+                        .subject_core = next_owner_thread->GetActiveCore(),
+                        .priority = next_owner_thread->GetPriority(),
+                        .affinity_mask = static_cast<u32>(
+                            next_owner_thread->GetAffinityMask().GetAffinityMask()),
+                        .kind = KSchedulerTrace::EventKind::Signal,
+                        .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::MutexHandoff),
+                    });
+                }
                 next_owner_thread->EndWait(m_system.Kernel(), ResultSuccess);
             }
 
@@ -327,6 +406,24 @@ Result KConditionVariable::Wait(KProcessAddress addr, u64 key, u32 value, s64 ti
 
         // Begin waiting.
         wait_queue.SetHardwareTimer(timer);
+        const u64 wait_id = cur_thread->NextTraceWaitId();
+        if (m_system.Kernel().IsSchedulerTraceEnabled()) [[unlikely]] {
+            auto& kernel = m_system.Kernel();
+            kernel.SchedulerTrace().Record({
+                .virt_ns = kernel.CurrentTraceTimeNs(),
+                .thread_key = KSchedulerTrace::ThreadKey(cur_thread),
+                .wait_id = wait_id,
+                .object_key = key,
+                .deadline_virt_ns = timeout > 0 ? static_cast<u64>(timeout) : 0,
+                .emitter_core = kernel.CurrentEmitterCoreId(),
+                .subject_core = cur_thread->GetActiveCore(),
+                .priority = cur_thread->GetPriority(),
+                .affinity_mask =
+                    static_cast<u32>(cur_thread->GetAffinityMask().GetAffinityMask()),
+                .kind = KSchedulerTrace::EventKind::WaitBegin,
+                .sub_kind = static_cast<u8>(KSchedulerTrace::WaitKind::ConditionVar),
+            });
+        }
         cur_thread->BeginWait(m_system.Kernel(), std::addressof(wait_queue));
         cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::ConditionVar);
     }

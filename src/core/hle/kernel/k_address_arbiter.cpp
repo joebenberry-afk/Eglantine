@@ -135,6 +135,44 @@ private:
     KAddressArbiter::ThreadTree* m_tree{};
 };
 
+void RecordArbiterSignal(KernelCore& kernel, KThread* target_thread, uint64_t addr) {
+    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = KSchedulerTrace::ThreadKey(target_thread),
+            .wait_id = target_thread->GetTraceWaitId(),
+            .object_key = addr,
+            .emitter_core = kernel.CurrentEmitterCoreId(),
+            .subject_core = target_thread->GetActiveCore(),
+            .priority = target_thread->GetPriority(),
+            .affinity_mask =
+                static_cast<u32>(target_thread->GetAffinityMask().GetAffinityMask()),
+            .kind = KSchedulerTrace::EventKind::Signal,
+            .sub_kind = static_cast<u8>(KSchedulerTrace::SignalOutcome::WakeReady),
+        });
+    }
+}
+
+void RecordArbiterWaitBegin(KernelCore& kernel, KThread* cur_thread, uint64_t addr, s64 timeout) {
+    const u64 wait_id = cur_thread->NextTraceWaitId();
+    if (kernel.IsSchedulerTraceEnabled()) [[unlikely]] {
+        kernel.SchedulerTrace().Record({
+            .virt_ns = kernel.CurrentTraceTimeNs(),
+            .thread_key = KSchedulerTrace::ThreadKey(cur_thread),
+            .wait_id = wait_id,
+            .object_key = addr,
+            .deadline_virt_ns = timeout > 0 ? static_cast<u64>(timeout) : 0,
+            .emitter_core = kernel.CurrentEmitterCoreId(),
+            .subject_core = cur_thread->GetActiveCore(),
+            .priority = cur_thread->GetPriority(),
+            .affinity_mask =
+                static_cast<u32>(cur_thread->GetAffinityMask().GetAffinityMask()),
+            .kind = KSchedulerTrace::EventKind::WaitBegin,
+            .sub_kind = static_cast<u8>(KSchedulerTrace::WaitKind::Arbiter),
+        });
+    }
+}
+
 } // namespace
 
 Result KAddressArbiter::Signal(uint64_t addr, s32 count) {
@@ -148,6 +186,7 @@ Result KAddressArbiter::Signal(uint64_t addr, s32 count) {
                (it->GetAddressArbiterKey() == addr)) {
             // End the thread's wait.
             KThread* target_thread = std::addressof(*it);
+            RecordArbiterSignal(system.Kernel(), target_thread, addr);
             target_thread->EndWait(system.Kernel(), ResultSuccess);
 
             ASSERT(target_thread->IsWaitingForAddressArbiter());
@@ -177,6 +216,7 @@ Result KAddressArbiter::SignalAndIncrementIfEqual(uint64_t addr, s32 value, s32 
                (it->GetAddressArbiterKey() == addr)) {
             // End the thread's wait.
             KThread* target_thread = std::addressof(*it);
+            RecordArbiterSignal(system.Kernel(), target_thread, addr);
             target_thread->EndWait(system.Kernel(), ResultSuccess);
 
             ASSERT(target_thread->IsWaitingForAddressArbiter());
@@ -240,6 +280,7 @@ Result KAddressArbiter::SignalAndModifyByWaitingCountIfEqual(uint64_t addr, s32 
                (it->GetAddressArbiterKey() == addr)) {
             // End the thread's wait.
             KThread* target_thread = std::addressof(*it);
+            RecordArbiterSignal(system.Kernel(), target_thread, addr);
             target_thread->EndWait(system.Kernel(), ResultSuccess);
 
             ASSERT(target_thread->IsWaitingForAddressArbiter());
@@ -299,6 +340,7 @@ Result KAddressArbiter::WaitIfLessThan(uint64_t addr, s32 value, bool decrement,
 
         // Wait for the thread to finish.
         wait_queue.SetHardwareTimer(timer);
+        RecordArbiterWaitBegin(system.Kernel(), cur_thread, addr, timeout);
         cur_thread->BeginWait(system.Kernel(), std::addressof(wait_queue));
         cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Arbitration);
     }
@@ -356,6 +398,7 @@ Result KAddressArbiter::WaitIfEqual(uint64_t addr, s64 value, s64 timeout, bool 
 
         // Wait for the thread to finish.
         wait_queue.SetHardwareTimer(timer);
+        RecordArbiterWaitBegin(system.Kernel(), cur_thread, addr, timeout);
         cur_thread->BeginWait(system.Kernel(), std::addressof(wait_queue));
         cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Arbitration);
     }

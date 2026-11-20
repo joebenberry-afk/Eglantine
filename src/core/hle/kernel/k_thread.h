@@ -925,6 +925,9 @@ private:
     u32 m_yield_streak{};
     u64 m_yield_epoch{};
     s64 m_last_scheduled_tick{};
+    u64 m_trace_wait_id{};
+    u64 m_trace_handoff_gen{};
+    u64 m_trace_entered_handoff_gen{};
     std::atomic<bool> m_entered_kernel{false};
     std::array<QueueEntry, Core::Hardware::NUM_CPU_CORES> m_per_core_priority_queue_entry{};
     KThreadQueue* m_wait_queue{};
@@ -1011,6 +1014,24 @@ public:
 
     ConditionVariableThreadTree* GetConditionVariableTree() const {
         return m_condvar_tree;
+    }
+
+    u64 NextTraceWaitId() noexcept {
+        return ++m_trace_wait_id;
+    }
+    u64 GetTraceWaitId() const noexcept {
+        return m_trace_wait_id;
+    }
+    u64 NextTraceHandoffGen() noexcept {
+        return ++m_trace_handoff_gen;
+    }
+    u64 ConsumePendingGuestEnterGen() noexcept {
+        const u64 gen = m_trace_handoff_gen;
+        if (gen != m_trace_entered_handoff_gen) {
+            m_trace_entered_handoff_gen = gen;
+            return gen;
+        }
+        return 0;
     }
 };
 

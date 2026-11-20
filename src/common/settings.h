@@ -993,6 +993,8 @@ struct Values {
                                     Category::DebuggingGraphics};
     Setting<bool> extended_logging{
                                    linkage, false, "extended_logging", Category::Debugging, Specialization::Default, false};
+    Setting<bool> trace_scheduler_latency{
+                                          linkage, false, "trace_scheduler_latency", Category::Debugging, Specialization::Default, false};
     Setting<bool> use_debug_asserts{linkage, false, "use_debug_asserts", Category::Debugging};
     Setting<bool> use_auto_stub{
                                 linkage, false, "use_auto_stub", Category::Debugging};
