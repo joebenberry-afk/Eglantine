@@ -45,11 +45,14 @@ def make_report(
     on_baseline: bool = True,
     lost_events: int = 0,
     unknown_extra_ms: int = 0,
+    exit_block: dict | None = None,
+    build: dict | None = None,
+    title_id: str | None = None,
 ) -> dict:
     if unknown_extra_ms and frames:
         frames[0]["cause_ns"]["unknown"] += unknown_extra_ms * MS
         frames[0]["cause_ns"]["waiting"] -= unknown_extra_ms * MS
-    return {
+    doc = {
         "schema_version": 2,
         "baseline": {
             "version": 1,
@@ -76,8 +79,20 @@ def make_report(
             "producer_unknown_wait_ns": 0,
             "long_frames": frames,
         },
-        "exit": {"code": 0},
+        "exit": exit_block
+        if exit_block is not None
+        else {
+            "code": 0,
+            "reason": "requested",
+            "metrics_complete": True,
+            "shutdown_complete": True,
+        },
     }
+    if build is not None:
+        doc["build"] = build
+    if title_id is not None:
+        doc.setdefault("title_id", title_id)
+    return doc
 
 
 class FirstMinutesGateTests(unittest.TestCase):
@@ -238,6 +253,64 @@ class FirstMinutesGateTests(unittest.TestCase):
             rep_bad.write_text(json.dumps({"exit": {"code": 1}, "cache": {"files": []}}), encoding="utf-8")
             bad = fg.verify_cache_rejection(rep_bad, log)
             self.assertEqual(bad["verdict"], "FAIL")
+
+    def test_exit_completeness_and_build_title_mismatch_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cold_p = root / "cold.json"
+            sec_p = root / "second.json"
+            for bad_exit, expected_msg in (
+                ({"code": 124, "reason": "timeout", "metrics_complete": True, "shutdown_complete": True}, "exit code"),
+                ({"code": 0, "reason": "host_crash", "metrics_complete": True, "shutdown_complete": True}, "exit reason"),
+                ({"code": 0, "reason": "requested", "metrics_complete": False, "shutdown_complete": True}, "metrics_complete"),
+                ({"code": 0, "reason": "requested", "metrics_complete": True, "shutdown_complete": False}, "shutdown_complete"),
+            ):
+                cold_p.write_text(
+                    json.dumps(make_report([make_frame(0, 200, shader=120)], exit_block=bad_exit)),
+                    encoding="utf-8",
+                )
+                sec_p.write_text(json.dumps(make_report([])), encoding="utf-8")
+                res = fg.score_pair(cold_p, sec_p)
+                self.assertEqual(res["verdict"], "INCOMPLETE")
+                self.assertIn(expected_msg, res["reasons"][0])
+
+            cold_p.write_text(
+                json.dumps(
+                    make_report(
+                        [make_frame(0, 200, shader=120)],
+                        build={"revision": "revA", "build_id": "idA"},
+                        title_id=SYNTHETIC_TID,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            sec_p.write_text(
+                json.dumps(
+                    make_report(
+                        [],
+                        build={"revision": "revB", "build_id": "idA"},
+                        title_id=SYNTHETIC_TID,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            res_build = fg.score_pair(cold_p, sec_p)
+            self.assertEqual(res_build["verdict"], "INCOMPLETE")
+            self.assertIn("build.revision mismatch", res_build["reasons"][0])
+
+            sec_p.write_text(
+                json.dumps(
+                    make_report(
+                        [],
+                        build={"revision": "revA", "build_id": "idA"},
+                        title_id="feedface",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            res_tid = fg.score_pair(cold_p, sec_p)
+            self.assertEqual(res_tid["verdict"], "INCOMPLETE")
+            self.assertIn("title_id mismatch", res_tid["reasons"][0])
 
 
 if __name__ == "__main__":

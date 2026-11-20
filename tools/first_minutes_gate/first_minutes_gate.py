@@ -64,6 +64,18 @@ CACHE_STEMS = (
 CACHE_SUFFIXES = (".mythos.bin", ".bin")
 WARM_FILES = ("warm-compute.bin", "warm-compute.count", "warm-compute.done")
 
+FAILURE_EXIT_REASONS = frozenset(
+    (
+        "host_crash",
+        "timeout",
+        "report_io_error",
+        "guest_crash",
+        "device_lost",
+        "shader_failure",
+        "startup_error",
+    )
+)
+
 REJECT_LOG_PATTERNS = {
     "format_version": re.compile(
         r"Nx2Cache reject kind=transferable reason=format_version "
@@ -133,6 +145,16 @@ def _baseline_summary(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_summary(doc: dict[str, Any]) -> dict[str, Any]:
+    build = doc.get("build")
+    if not isinstance(build, dict):
+        return {"revision": None, "build_id": None}
+    return {
+        "revision": build.get("revision"),
+        "build_id": build.get("build_id"),
+    }
+
+
 def score_report(report_path: str | Path) -> dict[str, Any]:
     """Validate and score a single schema-2 run report against the 0.5 attribution rule."""
     path = Path(report_path)
@@ -147,6 +169,21 @@ def score_report(report_path: str | Path) -> dict[str, Any]:
             "reason": f"schema_version={doc.get('schema_version')!r} (requires 2)",
             "path": str(path),
         }
+
+    exit_block = doc.get("exit")
+    if exit_block is not None:
+        if not isinstance(exit_block, dict):
+            return {"valid": False, "reason": "malformed exit block", "path": str(path)}
+        exit_code = exit_block.get("code")
+        if exit_code not in (0, None):
+            return {"valid": False, "reason": f"report exit code {exit_code!r}", "path": str(path)}
+        exit_reason = exit_block.get("reason")
+        if exit_reason in FAILURE_EXIT_REASONS:
+            return {"valid": False, "reason": f"report exit reason {exit_reason!r}", "path": str(path)}
+        if exit_block.get("metrics_complete") is False:
+            return {"valid": False, "reason": "report exit.metrics_complete is false", "path": str(path)}
+        if exit_block.get("shutdown_complete") is False:
+            return {"valid": False, "reason": "report exit.shutdown_complete is false", "path": str(path)}
 
     startup = doc.get("startup")
     first_120s = doc.get("first_120s")
@@ -274,6 +311,8 @@ def score_report(report_path: str | Path) -> dict[str, Any]:
         "worst_unknown_permille": worst_unknown_permille,
         "unclassified_intervals": unclassified_intervals,
         "baseline": _baseline_summary(doc),
+        "build": _build_summary(doc),
+        "title_id": doc.get("title_id"),
         "exit_code": (doc.get("exit") or {}).get("code"),
     }
 
@@ -316,6 +355,16 @@ def score_pair(
                     f"baseline mismatch: cold=v{cb['version']}:{cb['hash']} vs "
                     f"second=v{sb['version']}:{sb['hash']}"
                 )
+
+    if cold["valid"] and second["valid"]:
+        ctid, stid = cold.get("title_id"), second.get("title_id")
+        if ctid and stid and str(ctid).lower() != str(stid).lower():
+            reasons.append(f"title_id mismatch: cold={ctid} vs second={stid}")
+        cbuild, sbuild = cold.get("build") or {}, second.get("build") or {}
+        for field in ("revision", "build_id"):
+            cval, sval = cbuild.get(field), sbuild.get(field)
+            if cval and sval and cval != sval:
+                reasons.append(f"build.{field} mismatch: cold={cval} vs second={sval}")
 
     if reasons:
         return {
